@@ -10,7 +10,8 @@ dependencies = [
     "sqlalchemy",
     "psycopg[binary]",
     "pydantic",
-    "pydantic-settings"
+    "pydantic-settings",
+    "alembic",
 ]
 
 [project.optional-dependencies]
