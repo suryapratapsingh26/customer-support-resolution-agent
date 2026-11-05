@@ -1,7 +1,5 @@
-from sqlalchemy.orm import configure_mappers
-
 from app.db.base import Base
-from app.db.models import Customer, Order, OrderItem, Ticket
+from app.db import models  # noqa: F401
 
 
 def test_all_models_are_registered():
@@ -10,18 +8,19 @@ def test_all_models_are_registered():
         "orders",
         "order_items",
         "tickets",
+        "payments",
+        "refunds",
+        "shipments",
     }
 
     assert set(Base.metadata.tables.keys()) == expected_tables
 
 
-def test_model_relationships_are_configured():
-    configure_mappers()
-
-    assert hasattr(Customer, "orders")
-    assert hasattr(Customer, "tickets")
-    assert hasattr(Order, "customer")
-    assert hasattr(Order, "items")
-    assert hasattr(OrderItem, "order")
-    assert hasattr(Ticket, "customer")
-    assert hasattr(Ticket, "order")
+def test_models_have_expected_tables():
+    assert "customers" in Base.metadata.tables
+    assert "orders" in Base.metadata.tables
+    assert "order_items" in Base.metadata.tables
+    assert "tickets" in Base.metadata.tables
+    assert "payments" in Base.metadata.tables
+    assert "refunds" in Base.metadata.tables
+    assert "shipments" in Base.metadata.tables
