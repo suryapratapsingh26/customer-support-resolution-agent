@@ -12,6 +12,9 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "alembic",
+    "chromadb>=0.5,<2",
+    "sentence-transformers>=3,<6",
+    "pypdf>=5,<7",
 ]
 
 [project.optional-dependencies]
