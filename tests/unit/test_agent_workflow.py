@@ -80,7 +80,10 @@ def test_successful_workflow_preserves_sources_and_context_and_does_not_mutate(d
     db.add(Shipment(order_id=order.id, carrier="DemoShip", tracking_number="track-1", status="in_transit"))
     db.commit()
     knowledge, llm = FakeKnowledge(), FakeLLM()
-    result = run_resolution_workflow(ticket.id, db, knowledge, llm)
+    result = run_resolution_workflow(
+        ticket.id, db, knowledge, llm,
+        conversation_messages=[{"role": "customer", "content": "The tracking page is delayed."}],
+    )
     assert result.ticket_id == ticket.id
     assert result.issue_category == "shipping"
     assert result.retrieved_knowledge_sources[0].id == "chunk-1"
@@ -90,6 +93,7 @@ def test_successful_workflow_preserves_sources_and_context_and_does_not_mutate(d
     assert "amount" not in llm.payload["context"]["payments"][0]
     assert "unit_price" not in llm.payload["context"]["order"]["items"][0]
     assert llm.payload["context"]["shipments"][0]["status"] == "in_transit"
+    assert llm.payload["conversation_history"][0]["content"] == "The tracking page is delayed."
     assert result.human_review_recommended is True
     assert db.scalar(select(func.count()).select_from(Refund)) == 1
     assert db.scalar(select(func.count()).select_from(Payment)) == 1

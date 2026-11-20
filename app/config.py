@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     approval_actor_id: str | None = None
     approval_request_api_key: str | None = None
     approval_request_actor_id: str | None = None
+    agent_api_key: str | None = None
+    agent_customer_token_secret: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -163,3 +163,44 @@ Request creation requires `X-Approval-Request-Token` matching `APPROVAL_REQUEST_
 The allowed `policy_basis` values are `unused_original_packaging`, `faulty_item`, `incorrect_item`, `partial_return`, `missing_item`, and `price_adjustment`. Approval creation, approval, and execution recheck ticket/order/payment ownership, successful payment status, and remaining captured balance in application code. For `unused_original_packaging`, the application enforces the 30-day delivery window; for `faulty_item` and `incorrect_item`, it enforces 90 days using the earliest recorded shipment delivery timestamp as a conservative order-level proxy. The schema does not link items to shipments or record return receipt/item condition, so the approving operator must explicitly confirm manual policy review. The approved request amount is checked against the current refundable balance again at execution. The execution transaction creates the refund and marks the approval executed together, uses an approval-scoped idempotency key, and leaves the approval approved if execution fails. The LLM cannot approve a refund or supply its authoritative amount. Refund recommendations use a fixed review handoff; a separate LangGraph resume graph re-reads persistent approval status and cannot resume from stale in-memory state.
 
 Run approval/tool tests with `python -m pytest tests/unit/test_refund_approvals.py tests/unit/test_support_tools.py tests/api/test_refund_approvals_api.py`. Run the complete test suite with `python -m pytest`.
+
+## Customer support agent API
+
+The conversation API persists sessions, customer/assistant messages, and execution state in `agent_sessions`, `agent_messages`, and `agent_executions`. A session is bound to one ticket and customer. Session creation and every customer-facing route validate that relationship. Requests require both `X-Agent-API-Key` and a short-lived `X-Agent-Customer-Token`; configure `AGENT_API_KEY` and the independent `AGENT_CUSTOMER_TOKEN_SECRET` with random secrets of at least 32 characters. The trusted upstream identity service authenticates the user and signs a customer scope token as `{customer_id}.{expiry_unix}.{hex_hmac_sha256}`, where the HMAC covers `{customer_id}.{expiry_unix}` and uses `AGENT_CUSTOMER_TOKEN_SECRET`. Tokens must expire within ten minutes. The API rejects tokens scoped to a different path customer ID, so the service key alone cannot select arbitrary customer records. Keep the signing secret only in the trusted identity service and this API. Approval review remains separately authenticated with the approval credentials described above.
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/customers/{customer_id}/tickets/{ticket_id}/agent-sessions` | Create or idempotently retrieve a session with `{"idempotency_key":"session-..."}` |
+| `GET /api/v1/customers/{customer_id}/agent-sessions/{session_id}` | Read session and active execution status |
+| `GET /api/v1/customers/{customer_id}/agent-sessions/{session_id}/messages` | Read conversation history |
+| `POST /api/v1/customers/{customer_id}/agent-sessions/{session_id}/messages` | Submit `{"content":"Where is my order?","idempotency_key":"message-..."}` and run the recommendation workflow |
+| `GET /api/v1/customers/{customer_id}/agent-executions/{execution_id}` | Read an execution |
+| `GET /api/v1/customers/{customer_id}/tickets/{ticket_id}/agent-executions` | List ticket executions |
+| `POST /api/v1/customers/{customer_id}/agent-executions/{execution_id}/cancel` | Cancel an eligible execution |
+| `POST /api/v1/agent-executions/{execution_id}/resume` | Resume after review with `{"approval_id":123}`; requires the approval operator credential |
+
+Supply both scope headers on session, message, read, and cancellation requests. Creation returns 201 (200 for an idempotent replay); message submission returns 200 after a recommendation, 202 while waiting for approval, and 503 with an execution ID if processing failed. A waiting response contains an action proposal only; it does not create an approval or execute a refund. Create and review the refund using the existing `/api/v1/refund-approvals` endpoints, then resume using its persistent approval ID. Resume reloads and verifies that approval in the existing refund workflow; only that service can execute a refund.
+
+Executions move through `pending -> running -> completed`, `waiting_for_approval`, or `failed`; a failed execution can be retried by resubmitting through a new message, while eligible executions can be cancelled. A session allows one active execution at a time. Idempotency keys prevent duplicate session creation and message processing. A cancelled in-flight recommendation will not overwrite the cancellation when it returns. Cancellation does not interrupt an approved refund transaction. Ticket status is never changed by this API.
+
+Example:
+
+```http
+POST /api/v1/customers/7/tickets/42/agent-sessions
+X-Agent-API-Key: <configured service secret>
+X-Agent-Customer-Token: <signed token scoped to customer 7>
+Content-Type: application/json
+
+{"idempotency_key":"session-customer-7-001"}
+```
+
+```http
+POST /api/v1/customers/7/agent-sessions/15/messages
+X-Agent-API-Key: <configured service secret>
+X-Agent-Customer-Token: <signed token scoped to customer 7>
+Content-Type: application/json
+
+{"content":"My order has not arrived.","idempotency_key":"message-customer-7-001"}
+```
+
+The message response includes the persisted message and execution, including status, response/proposed action, approval reference when resumed, and sanitized error information. The conversation API uses the existing recommendation graph and read-only support tools; the LLM has no mutation tool access. Run agent service tests with `python -m pytest tests/unit/test_agent_api_service.py tests/unit/test_agent_workflow.py`.
