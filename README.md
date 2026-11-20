@@ -204,3 +204,25 @@ Content-Type: application/json
 ```
 
 The message response includes the persisted message and execution, including status, response/proposed action, approval reference when resumed, and sanitized error information. The conversation API uses the existing recommendation graph and read-only support tools; the LLM has no mutation tool access. Run agent service tests with `python -m pytest tests/unit/test_agent_api_service.py tests/unit/test_agent_workflow.py`.
+
+## Customer support dashboard
+
+The React, TypeScript, and Vite application lives in `frontend/`. It is organized into route pages in `src/App.tsx`, shared layout/status components in `src/components/`, typed API services in `src/api/`, dashboard loading logic in `src/hooks/`, and shared backend contracts in `src/types.ts`. The interface includes an overview, searchable/status-filtered ticket queue, ticket/order detail view, persistent agent conversation with execution refresh/cancellation, and a reviewer workspace for pending approvals, decisions, known approval lookup, and available execution results.
+
+Install and run it from the frontend directory:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+npm test
+npm run build
+```
+
+Copy `frontend/.env.example` to `frontend/.env.local` and set `VITE_API_BASE_URL` if the API is not reachable at `/api/v1` on the dashboard origin. Do not put API credentials or signing secrets in any `VITE_*` variable. Requests are sent through the host-provided `window.supportDashboardHost` bridge. The host must implement `getAuthorizedCustomers()` and `request(url, init, context)`, enforce the logged-in operator’s permissions, proxy requests to FastAPI, and attach backend credentials server-side. Agent requests need the service key plus a customer token scoped to that authorized customer; reviewer requests need the separate approval credential. The browser dashboard never receives `AGENT_API_KEY`, `AGENT_CUSTOMER_TOKEN_SECRET`, or reviewer secrets. Without this identity bridge the dashboard fails closed with an integration message.
+
+The repository does not currently implement the upstream login/identity service or a BFF. Its customer and ticket/order read endpoints also do not enforce the agent customer scope themselves. Do not expose the FastAPI service directly to untrusted browsers: the host bridge/proxy must authorize customer visibility for these existing read routes as well as attach the agent scope for agent endpoints. This is an integration boundary, not a frontend credential form.
+
+Some requested detail is not available in the current backend contract: order responses do not include payments or shipments, agent executions do not persist/retrieve policy source citations, and approvals have no endpoint to enumerate all past decisions. The dashboard labels payment/shipment facts as unavailable, displays only the resolution and handoff returned by the saved execution, and supports history lookup by a known approval ID. It never calls a refund execution route; an approved request remains subject to the existing authorized backend execution workflow.
+
+Frontend tests cover dashboard rendering, ticket search/filtering and details, agent session/message flow and status display, approval/rejection interactions, and authentication/error handling. Run `npm test` and `npm run build` from `frontend/`. The backend suite remains `python -m pytest` from the repository root.
