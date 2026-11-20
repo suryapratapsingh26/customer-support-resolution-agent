@@ -1,11 +1,12 @@
 import { api } from './client'
-import type { AgentConversation, AgentExecution, AgentMessageResult, AgentSession, AuthStatus, Customer, Order, RefundApproval, RefundExecutionResult, SessionStatus, Ticket } from '../types'
+import type { AgentConversation, AgentExecution, AgentMessageResult, AgentSession, AuthStatus, Customer, Order, RefundApproval, RefundApprovalHistory, RefundExecutionResult, SessionStatus, Ticket, TicketContext } from '../types'
 
 export const supportApi = {
   authStatus: () => api.get<AuthStatus>('/auth/status'),
   customers: () => api.get<Customer[]>('/customers'),
   tickets: (customerId: number) => api.get<Ticket[]>(`/tickets/customer/${customerId}`),
   ticket: (ticketId: number, customerId: number) => api.get<Ticket>(`/customers/${customerId}/tickets/${ticketId}`),
+  ticketContext: (ticketId: number, customerId: number) => api.get<TicketContext>(`/customers/${customerId}/tickets/${ticketId}/context`),
   customer: (customerId: number) => api.get<Customer>(`/customers/${customerId}`),
   orders: (customerId: number) => api.get<Order[]>(`/orders/customer/${customerId}`),
   order: (orderId: number, customerId: number) => api.get<Order>(`/customers/${customerId}/orders/${orderId}`),
@@ -16,10 +17,15 @@ export const supportApi = {
   executions: (customerId: number, ticketId: number) => api.get<AgentExecution[]>(`/customers/${customerId}/tickets/${ticketId}/agent-executions`),
   execution: (customerId: number, executionId: number) => api.get<AgentExecution>(`/customers/${customerId}/agent-executions/${executionId}`),
   cancelExecution: (customerId: number, executionId: number) => api.post<AgentExecution>(`/customers/${customerId}/agent-executions/${executionId}/cancel`, {}),
+  resumeExecution: (executionId: number, approvalId: number) => api.post<AgentExecution>(`/agent-executions/${executionId}/resume`, { approval_id: approvalId }),
+  createRefundApproval: (customerId: number, ticketId: number, request: { order_id: number; payment_id: number; policy_basis: string; requested_amount: string; reason: string }) => api.post<RefundApproval>(`/customers/${customerId}/tickets/${ticketId}/refund-approvals`, request),
+  customerApprovals: (customerId: number) => api.get<RefundApprovalHistory[]>(`/customers/${customerId}/refund-approvals`),
   pendingApprovals: () => api.get<RefundApproval[]>('/refund-approvals/pending'),
+  approvalHistory: () => api.get<RefundApprovalHistory[]>('/refund-approvals/history'),
   approval: (id: number) => api.get<RefundApproval>(`/refund-approvals/${id}`),
   approve: (id: number) => api.post<RefundApproval>(`/refund-approvals/${id}/approve`, { confirm_policy_review: true }),
   reject: (id: number, reason: string) => api.post<RefundApproval>(`/refund-approvals/${id}/reject`, { reason }),
+  executeRefund: (id: number) => api.post<RefundExecutionResult>(`/refund-approvals/${id}/execute`, {}),
   executionResult: (id: number) => api.get<RefundExecutionResult>(`/refund-approvals/${id}/execution`),
   logout: () => api.post<void>('/auth/logout', {}),
 }

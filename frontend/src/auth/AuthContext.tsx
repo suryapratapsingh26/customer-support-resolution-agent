@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refresh() }, [])
   const logout = async () => {
     await supportApi.logout()
-    setCsrfToken(undefined); setStatus({ authenticated: false, user: null, permissions: { reviewer: false } })
+    setCsrfToken(undefined); setStatus({ authenticated: false, user: null, permissions: { reviewer: false, agent: false } })
   }
   const login = () => { window.location.assign('/api/bff/auth/login') }
   return <AuthContext.Provider value={{ status, loading, error, refresh, logout, login }}>{children}</AuthContext.Provider>
