@@ -23,3 +23,5 @@ class ResolutionRecommendation(BaseModel):
     confidence_score: float = Field(ge=0, le=1)
     missing_information: list[str] = Field(default_factory=list)
     human_review_recommended: bool = True
+    action_required: bool = False
+    required_action: str | None = None

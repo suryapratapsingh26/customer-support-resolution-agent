@@ -1,16 +1,20 @@
 from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.llm import LLMProviderError, OpenAICompatibleProvider
 from app.config import settings
-from app.db.models import Customer, Order, Payment, Refund, Shipment, Ticket
 from app.knowledge.service import build_knowledge_service
 from app.schemas.resolution import KnowledgeSource, ResolutionRecommendation
-from app.services.order import get_order
 from app.services.ticket import get_ticket
+from app.services import customer as customer_service
+from app.tools.support import (
+    ToolAccessError,
+    check_payment_refund_history,
+    lookup_customer_order,
+    retrieve_shipment_status,
+)
 
 
 class AgentState(TypedDict, total=False):
@@ -74,27 +78,26 @@ def build_agent_workflow(db: Session, knowledge_service: Any, llm: Any):
 
     def customer_order_context(state: AgentState) -> dict:
         ticket = state["ticket"]
-        customer = db.get(Customer, ticket["customer_id"])
-        order = get_order(db, ticket["order_id"]) if ticket.get("order_id") is not None else None
-        if order is not None and order.customer_id != ticket["customer_id"]:
-            order = None
+        customer = customer_service.get_customer(db, ticket["customer_id"])
         order_data = None
         payments, shipments, refunds = [], [], []
-        if order is not None:
-            order_data = {"id": order.id, "status": order.status,
-                          "items": [{"product_name": item.product_name, "quantity": item.quantity}
-                                    for item in order.items]}
-            payment_rows = list(db.scalars(select(Payment).where(Payment.order_id == order.id)).all())
-            # Do not give the LLM monetary values it could use to calculate a refund.
-            payments = [{"id": row.id, "currency": row.currency,
-                         "payment_method": row.payment_method, "status": row.status} for row in payment_rows]
-            for payment in payment_rows:
-                for refund in db.scalars(select(Refund).where(Refund.payment_id == payment.id)).all():
-                    refunds.append({"status": refund.status, "reason": refund.reason})
-            shipments = [{"carrier": row.carrier, "status": row.status,
-                          "estimated_delivery_at": row.estimated_delivery_at,
-                          "shipped_at": row.shipped_at, "delivered_at": row.delivered_at}
-                         for row in db.scalars(select(Shipment).where(Shipment.order_id == order.id)).all()]
+        order_id = ticket.get("order_id")
+        if order_id is not None:
+            try:
+                lookup = lookup_customer_order(db, ticket["id"], order_id)
+                order_data = lookup["order"]
+                history = check_payment_refund_history(db, ticket["id"], order_id)
+                # Never include monetary values in LLM context.
+                payments = [{"payment_method": item["payment"]["payment_method"],
+                             "currency": item["payment"]["currency"],
+                             "status": item["payment"]["status"]} for item in history["payments"]]
+                refunds = [{"status": refund["status"], "reason": refund["reason"]}
+                           for item in history["payments"] for refund in item["refunds"]]
+                shipment_data = retrieve_shipment_status(db, ticket["id"], order_id)
+                shipments = shipment_data["shipments"]
+            except ToolAccessError:
+                # Broken or mismatched associations are reported as missing context.
+                order_data = None
         return {"context": {
             "customer": ({"id": customer.id, "name": customer.name} if customer else None),
             "order": order_data, "payments": payments, "refunds": refunds, "shipments": shipments,
@@ -147,6 +150,8 @@ def build_agent_workflow(db: Session, knowledge_service: Any, llm: Any):
                 confidence_score=0.4,
                 missing_information=state["analysis"]["missing"],
                 human_review_recommended=True,
+                action_required=True,
+                required_action="refund_approval_review",
             )
             return {"recommendation": recommendation.model_dump()}
 
@@ -169,6 +174,10 @@ def build_agent_workflow(db: Session, knowledge_service: Any, llm: Any):
         recommendation.retrieved_knowledge_sources = [KnowledgeSource.model_validate(s) for s in state.get("sources", [])]
         recommendation.missing_information = sorted(set(recommendation.missing_information + state["analysis"]["missing"]))
         recommendation.human_review_recommended = True
+        # The model cannot create or authorize an action. Only the refund request
+        # path can advertise a next step, and it remains a human approval review.
+        recommendation.action_required = False
+        recommendation.required_action = None
         return {"recommendation": recommendation.model_dump()}
 
     def structured_response(state: AgentState) -> dict:

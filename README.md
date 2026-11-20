@@ -140,4 +140,26 @@ Example:
 POST /api/v1/tickets/42/resolution-recommendation
 ```
 
-The response includes `ticket_id`, `issue_category`, `issue_summary`, `customer_context_summary`, `retrieved_knowledge_sources`, `proposed_resolution`, `explanation`, `confidence_score`, `missing_information`, and `human_review_recommended`. Run the workflow tests with `python -m pytest tests/unit/test_agent_workflow.py`; these use an injected fake LLM and do not call a provider.
+The response includes `ticket_id`, `issue_category`, `issue_summary`, `customer_context_summary`, `retrieved_knowledge_sources`, `proposed_resolution`, `explanation`, `confidence_score`, `missing_information`, `human_review_recommended`, `action_required`, and `required_action`. Refund tickets set `action_required=true` and `required_action=refund_approval_review`; the recommendation graph pauses at this handoff and cannot execute the refund. Run the workflow tests with `python -m pytest tests/unit/test_agent_workflow.py`; these use an injected fake LLM and do not call a provider.
+
+## Agent tools and refund approvals
+
+Validated read-only support tools are in `app/tools/support.py`: customer/order lookup, payment and refund history, shipment tracking, deterministic refundable-balance checks, and order/shipping action preparation. Lookups verify the customer owns the order and associated ticket/payment/shipment. The order and shipping preparation tools only return proposals because no corresponding mutation services exist.
+
+Refund approvals are persisted in `refund_approvals` and move through `pending -> approved -> executed` or `pending -> rejected`. A payment may have only one active (pending or approved) approval at a time. Create and review requests using the following operator endpoints:
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/refund-approvals/tickets/{ticket_id}` | Create a pending request with `order_id`, `payment_id`, `requested_amount`, `policy_basis`, and `reason` |
+| `GET /api/v1/refund-approvals/pending` | List pending requests |
+| `GET /api/v1/refund-approvals/{approval_id}` | View a request |
+| `POST /api/v1/refund-approvals/{approval_id}/approve` | Approve with `{"confirm_policy_review": true}` |
+| `POST /api/v1/refund-approvals/{approval_id}/reject` | Reject with `{"reason": "..."}` |
+| `POST /api/v1/refund-approvals/{approval_id}/execute` | Resume the DB-backed workflow; runs only after approval |
+| `GET /api/v1/refund-approvals/{approval_id}/execution` | View the resulting refund |
+
+Request creation requires `X-Approval-Request-Token` matching `APPROVAL_REQUEST_API_KEY` and records `APPROVAL_REQUEST_ACTOR_ID`. Listing, viewing, approving, rejecting, executing, and reading results require `X-Approval-Token` matching `APPROVAL_API_KEY` and record `APPROVAL_ACTOR_ID`. Both distinct credentials must be configured with at least 32 characters, and the actor IDs must differ; the application disables these operations if role separation is misconfigured. The creator cannot approve their own request. All actor identities come from configuration rather than caller-supplied actor fields. Request amounts must come from trusted support/customer input, never LLM-generated amounts. Keep both credentials in a secret manager. This is a two-service shared-secret authorization model for the demo; replace it with per-user identity/role authorization before multi-operator production use.
+
+The allowed `policy_basis` values are `unused_original_packaging`, `faulty_item`, `incorrect_item`, `partial_return`, `missing_item`, and `price_adjustment`. Approval creation, approval, and execution recheck ticket/order/payment ownership, successful payment status, and remaining captured balance in application code. For `unused_original_packaging`, the application enforces the 30-day delivery window; for `faulty_item` and `incorrect_item`, it enforces 90 days using the earliest recorded shipment delivery timestamp as a conservative order-level proxy. The schema does not link items to shipments or record return receipt/item condition, so the approving operator must explicitly confirm manual policy review. The approved request amount is checked against the current refundable balance again at execution. The execution transaction creates the refund and marks the approval executed together, uses an approval-scoped idempotency key, and leaves the approval approved if execution fails. The LLM cannot approve a refund or supply its authoritative amount. Refund recommendations use a fixed review handoff; a separate LangGraph resume graph re-reads persistent approval status and cannot resume from stale in-memory state.
+
+Run approval/tool tests with `python -m pytest tests/unit/test_refund_approvals.py tests/unit/test_support_tools.py tests/api/test_refund_approvals_api.py`. Run the complete test suite with `python -m pytest`.
