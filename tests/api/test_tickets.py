@@ -1,6 +1,8 @@
 from app.db.models import Order, Ticket
 from app.db.session import get_db
 from app.main import app
+from app.schemas.resolution import ResolutionRecommendation
+from app.api.v1.routes import tickets as ticket_routes
 
 
 def create_test_ticket(client):
@@ -154,3 +156,24 @@ def test_create_ticket_with_another_customers_order(client):
     )
 
     assert response.status_code == 400
+
+
+def test_resolution_recommendation_endpoint(client, monkeypatch):
+    ticket_id = create_test_ticket(client)
+    recommendation = ResolutionRecommendation(
+        ticket_id=ticket_id, issue_category="shipping", issue_summary="Delayed delivery",
+        customer_context_summary="Order information unavailable.", retrieved_knowledge_sources=[],
+        proposed_resolution="Check for a current carrier estimate.",
+        explanation="The ticket describes a delivery delay.", confidence_score=0.7,
+        missing_information=["Ticket is not linked to an order."], human_review_recommended=True,
+    )
+    monkeypatch.setattr(ticket_routes, "run_resolution_workflow", lambda ticket_id, db: recommendation)
+    response = client.post(f"/api/v1/tickets/{ticket_id}/resolution-recommendation")
+    assert response.status_code == 200
+    assert response.json()["ticket_id"] == ticket_id
+    assert response.json()["human_review_recommended"] is True
+
+
+def test_resolution_recommendation_missing_ticket_returns_404(client):
+    response = client.post("/api/v1/tickets/999/resolution-recommendation")
+    assert response.status_code == 404

@@ -4,10 +4,27 @@ from sqlalchemy.orm import Session
 from app.db.models import Customer, Order
 from app.db.session import get_db
 from app.schemas.ticket import TicketCreate, TicketResponse, TicketUpdate
+from app.schemas.resolution import ResolutionRecommendation
+from app.agents.workflow import TicketNotFoundError, WorkflowError, run_resolution_workflow
 from app.services import ticket as ticket_service
 
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
+
+
+@router.post("/{ticket_id}/resolution-recommendation", response_model=ResolutionRecommendation)
+def recommend_resolution(ticket_id: int, db: Session = Depends(get_db)):
+    try:
+        return run_resolution_workflow(ticket_id, db)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.") from exc
+    except WorkflowError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Resolution recommendation is temporarily unavailable.") from exc
+    except Exception as exc:
+        # Do not leak provider, database, or configuration details to API clients.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Resolution recommendation is temporarily unavailable.") from exc
 
 
 @router.post(
