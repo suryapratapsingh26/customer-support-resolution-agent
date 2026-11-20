@@ -6,9 +6,11 @@ from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
     Index,
+    JSON,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -185,6 +187,67 @@ class RefundApproval(Base):
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     refund_id: Mapped[int | None] = mapped_column(ForeignKey("refunds.id"), unique=True, nullable=True)
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'closed')", name="ck_agent_sessions_status"),
+        UniqueConstraint("customer_id", "create_idempotency_key", name="uq_agent_sessions_customer_idempotency"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False, index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
+    create_idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AgentMessage(Base):
+    __tablename__ = "agent_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('customer', 'assistant')", name="ck_agent_messages_role"),
+        UniqueConstraint("session_id", "idempotency_key", name="uq_agent_messages_session_idempotency"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("agent_sessions.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AgentExecution(Base):
+    __tablename__ = "agent_executions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'waiting_for_approval', 'completed', 'failed', 'cancelled')",
+            name="ck_agent_executions_status",
+        ),
+        UniqueConstraint("session_id", "idempotency_key", name="uq_agent_executions_session_idempotency"),
+        UniqueConstraint("message_id", name="uq_agent_executions_message"),
+        Index(
+            "uq_agent_executions_active_session", "session_id", unique=True,
+            sqlite_where=text("status IN ('pending', 'running', 'waiting_for_approval')"),
+            postgresql_where=text("status IN ('pending', 'running', 'waiting_for_approval')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("agent_sessions.id"), nullable=False, index=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("agent_messages.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    agent_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposed_action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    approval_id: Mapped[int | None] = mapped_column(ForeignKey("refund_approvals.id"), nullable=True)
+    error_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class Shipment(Base):

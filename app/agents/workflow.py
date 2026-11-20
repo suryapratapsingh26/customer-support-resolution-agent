@@ -25,6 +25,7 @@ class AgentState(TypedDict, total=False):
     analysis: dict[str, Any]
     sources: list[dict[str, Any]]
     recommendation: dict[str, Any]
+    conversation_messages: list[dict[str, str]]
     error: str | None
 
 
@@ -105,7 +106,11 @@ def build_agent_workflow(db: Session, knowledge_service: Any, llm: Any):
 
     def analyze_ticket(state: AgentState) -> dict:
         ticket = state["ticket"]
-        text = f"{ticket['subject']} {ticket['description']}".casefold()
+        conversation = " ".join(
+            message.get("content", "") for message in state.get("conversation_messages", [])
+            if message.get("role") == "customer"
+        )
+        text = f"{ticket['subject']} {ticket['description']} {conversation}".casefold()
         categories = {
             "refund": ("refund", "return", "money back"),
             "payment": ("payment", "charged", "charge", "card", "billing"),
@@ -156,7 +161,8 @@ def build_agent_workflow(db: Session, knowledge_service: Any, llm: Any):
             return {"recommendation": recommendation.model_dump()}
 
         payload = {"ticket": state["ticket"], "analysis": state["analysis"],
-                   "context": state["context"], "sources": state.get("sources", [])}
+                   "context": state["context"], "sources": state.get("sources", []),
+                   "conversation_history": state.get("conversation_messages", [])}
         try:
             recommendation = llm.recommend(payload)
         except LLMProviderError as exc:
@@ -219,13 +225,15 @@ def _summarize_context(context: dict) -> str:
 
 
 def run_resolution_workflow(ticket_id: int | None, db: Session, knowledge_service: Any = None,
-                            llm: Any = None, ticket_data: dict[str, Any] | None = None) -> ResolutionRecommendation:
+                            llm: Any = None, ticket_data: dict[str, Any] | None = None,
+                            conversation_messages: list[dict[str, str]] | None = None) -> ResolutionRecommendation:
     knowledge_service = knowledge_service or (lambda: build_knowledge_service(settings))
     llm = llm or OpenAICompatibleProvider(settings.llm_api_key, settings.llm_model,
                                           settings.llm_base_url, settings.llm_timeout_seconds)
     graph = build_agent_workflow(db, knowledge_service, llm)
     try:
-        result = graph.invoke({"ticket_id": ticket_id, "ticket_data": ticket_data})
+        result = graph.invoke({"ticket_id": ticket_id, "ticket_data": ticket_data,
+                               "conversation_messages": conversation_messages or []})
     except WorkflowError:
         raise
     except Exception as exc:

@@ -12,6 +12,9 @@ def test_all_models_are_registered():
         "refunds",
         "refund_approvals",
         "shipments",
+        "agent_sessions",
+        "agent_messages",
+        "agent_executions",
     }
 
     assert set(Base.metadata.tables.keys()) == expected_tables
@@ -26,3 +29,6 @@ def test_models_have_expected_tables():
     assert "refunds" in Base.metadata.tables
     assert "refund_approvals" in Base.metadata.tables
     assert "shipments" in Base.metadata.tables
+    assert "agent_sessions" in Base.metadata.tables
+    assert "agent_messages" in Base.metadata.tables
+    assert "agent_executions" in Base.metadata.tables
