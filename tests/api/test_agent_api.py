@@ -1,8 +1,8 @@
-from types import SimpleNamespace
 import time
 
 from app.config import settings
 from app.auth.agent import create_customer_scope_token
+from app.schemas.resolution import KnowledgeSource, ResolutionRecommendation
 
 
 def headers(customer_id):
@@ -69,10 +69,13 @@ def test_agent_api_auth_ownership_and_conversation(client, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.agent_api.run_resolution_workflow",
-        lambda *args, **kwargs: SimpleNamespace(
-            action_required=False, required_action=None, issue_category="shipping",
-            missing_information=[], proposed_resolution="Check the shipment.",
-            explanation="The support team can check the shipment status.",
+        lambda *args, **kwargs: ResolutionRecommendation(
+            ticket_id=ticket["id"], issue_category="shipping", issue_summary="Delivery",
+            customer_context_summary="Order available.", retrieved_knowledge_sources=[KnowledgeSource(
+                id="policy-7", document_id="shipping", document_name="Shipping policy",
+                category="shipping", text="Tracking can be delayed by the carrier.", distance=0.2,
+            )], proposed_resolution="Check the shipment.",
+            explanation="The support team can check the shipment status.", confidence_score=0.8,
         ),
     )
     submitted = client.post(
@@ -81,6 +84,7 @@ def test_agent_api_auth_ownership_and_conversation(client, monkeypatch):
     )
     assert submitted.status_code == 200
     assert submitted.json()["execution"]["status"] == "completed"
+    assert submitted.json()["execution"]["recommendation"]["retrieved_knowledge_sources"][0]["document_name"] == "Shipping policy"
     history = client.get(
         f"/api/v1/customers/{customer['id']}/agent-sessions/{session_id}/messages",
         headers=headers(customer["id"]),

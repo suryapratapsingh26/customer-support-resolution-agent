@@ -162,6 +162,20 @@ def list_pending_refund_approvals(db: Session) -> list[RefundApproval]:
     return approvals
 
 
+def list_refund_approvals(db: Session, *, customer_id: int | None = None) -> list[RefundApproval]:
+    statement = select(RefundApproval).join(
+        Ticket, Ticket.id == RefundApproval.ticket_id,
+    )
+    if customer_id is not None:
+        statement = statement.where(Ticket.customer_id == customer_id)
+    approvals = list(db.scalars(
+        statement.order_by(RefundApproval.created_at.desc(), RefundApproval.id.desc())
+    ).all())
+    for approval in approvals:
+        _validate_links(db, approval.ticket_id, approval.order_id, approval.payment_id)
+    return approvals
+
+
 def approve_refund(db: Session, approval_id: int, actor_id: str,
                    policy_review_confirmed: bool = False) -> RefundApproval:
     approval = db.scalar(

@@ -234,6 +234,7 @@ def send_message(
             return message, execution, True
         _apply_transition(execution, "waiting_for_approval" if waiting else "completed")
         execution.agent_response = response
+        execution.recommendation = recommendation.model_dump(mode="json")
         execution.proposed_action = action
         execution.error_info = None
         _append_assistant_message(db, session_id, response)

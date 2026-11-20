@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.resolution import ResolutionRecommendation
+
 
 class AgentSessionCreate(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
@@ -44,6 +46,7 @@ class AgentExecutionResponse(BaseModel):
         "pending", "running", "waiting_for_approval", "completed", "failed", "cancelled",
     ]
     agent_response: str | None
+    recommendation: ResolutionRecommendation | None = None
     proposed_action: dict | None
     approval_id: int | None
     error_info: str | None

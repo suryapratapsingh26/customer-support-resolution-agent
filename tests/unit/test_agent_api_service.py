@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models import AgentExecution, AgentMessage, Customer, Order, Ticket
+from app.schemas.resolution import KnowledgeSource, ResolutionRecommendation
 from app.services import agent_api
 
 
@@ -30,15 +31,17 @@ def test_session_and_message_idempotency_and_ownership(monkeypatch):
         same_session, created_again = agent_api.create_session(db, customer.id, ticket.id, "session-key-001")
         assert created and not created_again and same_session.id == session.id
 
-        class Recommendation:
-            action_required = False
-            required_action = None
-            issue_category = "shipping"
-            missing_information = []
-            proposed_resolution = "Check shipment status."
-            explanation = "The order is available."
+        recommendation = ResolutionRecommendation(
+            ticket_id=ticket.id, issue_category="shipping", issue_summary=ticket.subject,
+            customer_context_summary="Order is available.",
+            retrieved_knowledge_sources=[KnowledgeSource(
+                id="source-1", document_id="shipping-policy", document_name="Shipping Policy",
+                category="shipping", text="Delivery updates can take one business day.", distance=0.1,
+            )], proposed_resolution="Check shipment status.",
+            explanation="The order is available.", confidence_score=0.8,
+        )
 
-        monkeypatch.setattr(agent_api, "run_resolution_workflow", lambda *a, **k: Recommendation())
+        monkeypatch.setattr(agent_api, "run_resolution_workflow", lambda *a, **k: recommendation)
         msg, execution, processed = agent_api.send_message(
             db, customer.id, session.id, "Please check this order", "message-key-001"
         )
@@ -48,6 +51,7 @@ def test_session_and_message_idempotency_and_ownership(monkeypatch):
         assert processed and not processed_again
         assert duplicate.id == msg.id and same_execution.id == execution.id
         assert execution.status == "completed"
+        assert execution.recommendation["retrieved_knowledge_sources"][0]["document_name"] == "Shipping Policy"
         assert len(agent_api.get_messages(db, customer.id, session.id)) == 2
         assert len(agent_api.list_ticket_executions(db, customer.id, ticket.id)) == 1
 
@@ -87,15 +91,15 @@ def test_refund_handoff_waits_without_creating_or_executing_refund(monkeypatch):
     try:
         session, _ = agent_api.create_session(db, customer.id, ticket.id, "session-key-003")
 
-        class Recommendation:
-            action_required = True
-            required_action = "refund_approval_review"
-            issue_category = "refund"
-            missing_information = []
-            proposed_resolution = "Send for review."
-            explanation = "A human reviewer is required."
+        recommendation = ResolutionRecommendation(
+            ticket_id=ticket.id, issue_category="refund", issue_summary=ticket.subject,
+            customer_context_summary="Order is available.", retrieved_knowledge_sources=[],
+            proposed_resolution="Send for review.", explanation="A human reviewer is required.",
+            confidence_score=0.4, action_required=True,
+            required_action="refund_approval_review",
+        )
 
-        monkeypatch.setattr(agent_api, "run_resolution_workflow", lambda *a, **k: Recommendation())
+        monkeypatch.setattr(agent_api, "run_resolution_workflow", lambda *a, **k: recommendation)
         monkeypatch.setattr(agent_api, "check_payment_refund_history", lambda *a: {"payments": [{"payment": {"status": "success"}}]})
         _, execution, _ = agent_api.send_message(
             db, customer.id, session.id, "I want a refund", "message-key-003"

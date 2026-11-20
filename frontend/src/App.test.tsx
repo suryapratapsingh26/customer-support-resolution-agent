@@ -6,30 +6,38 @@ import type { AgentConversation, AgentExecution, Customer, Order, RefundApproval
 
 const mocks = vi.hoisted(() => ({
   authStatus: vi.fn(), logout: vi.fn(),
-  customers: vi.fn(), tickets: vi.fn(), ticket: vi.fn(), order: vi.fn(), createSession: vi.fn(),
+  customers: vi.fn(), tickets: vi.fn(), ticket: vi.fn(), ticketContext: vi.fn(), customerApprovals: vi.fn(), createRefundApproval: vi.fn(), order: vi.fn(), createSession: vi.fn(),
   conversation: vi.fn(), sessionStatus: vi.fn(), sendMessage: vi.fn(), executions: vi.fn(), execution: vi.fn(),
-  cancelExecution: vi.fn(), pendingApprovals: vi.fn(), approval: vi.fn(), approve: vi.fn(),
-  reject: vi.fn(), executionResult: vi.fn(),
+  cancelExecution: vi.fn(), resumeExecution: vi.fn(), pendingApprovals: vi.fn(), approvalHistory: vi.fn(), approval: vi.fn(), approve: vi.fn(),
+  reject: vi.fn(), executeRefund: vi.fn(), executionResult: vi.fn(),
 }))
 vi.mock('./api/support', () => ({ supportApi: mocks }))
 
 const customer: Customer = { id: 7, name: 'Avery Chen', email: 'avery@example.test' }
 const ticket: Ticket = { id: 42, customer_id: 7, order_id: 8, subject: 'Delivery has not arrived', description: 'The tracking page has not updated since Monday.', status: 'open' }
 const order: Order = { id: 8, customer_id: 7, status: 'shipped', items: [{ id: 4, product_name: 'Wireless headphones', quantity: 1, unit_price: 7499 }] }
-const execution: AgentExecution = { id: 21, ticket_id: 42, session_id: 13, status: 'completed', agent_response: 'Check the carrier status.', proposed_action: null, approval_id: null, error_info: null, created_at: '2026-06-15T10:00:00Z', updated_at: '2026-06-15T10:01:00Z' }
+const execution: AgentExecution = { id: 21, ticket_id: 42, session_id: 13, status: 'completed', agent_response: 'Check the carrier status.', recommendation: null, proposed_action: null, approval_id: null, error_info: null, created_at: '2026-06-15T10:00:00Z', updated_at: '2026-06-15T10:01:00Z' }
 const approval: RefundApproval = { id: 9, ticket_id: 42, order_id: 8, payment_id: 3, requested_amount: '1200.00', policy_basis: 'faulty_item', reason: 'Item arrived damaged.', status: 'pending', requested_by: 'intake', policy_review_confirmed: false, created_at: '2026-06-15T10:00:00Z', reviewed_by: null, reviewed_at: null, rejection_reason: null, executed_at: null, refund_id: null }
 
 function response<T>(body: T) { return Promise.resolve(body) }
 function arrange() {
-  mocks.authStatus.mockImplementation(() => response({ authenticated: true, user: { subject: 'agent-1', name: 'Support Agent', email: 'agent@example.test' }, permissions: { reviewer: true }, csrf_token: 'csrf-test' }))
+  mocks.authStatus.mockImplementation(() => response({ authenticated: true, user: { subject: 'agent-1', name: 'Support Agent', email: 'agent@example.test' }, permissions: { reviewer: true, agent: true }, csrf_token: 'csrf-test' }))
   mocks.logout.mockImplementation(() => response(undefined))
   mocks.customers.mockImplementation(() => response([customer]))
   mocks.tickets.mockImplementation(() => response([ticket]))
   mocks.ticket.mockImplementation(() => response(ticket))
+  mocks.ticketContext.mockImplementation(() => response({ customer, ticket, order, payments: [{ id: 3, amount: '7499.00', currency: 'INR', payment_method: 'card', status: 'success', created_at: '2026-06-15T09:00:00Z', refunds: [] }], shipments: [{ id: 5, carrier: 'Parcel Post', tracking_number: 'TRACK-5', status: 'delivered', estimated_delivery_at: null, shipped_at: '2026-06-14T09:00:00Z', delivered_at: '2026-06-15T09:00:00Z' }] }))
+  mocks.customerApprovals.mockImplementation(() => response([]))
+  mocks.createRefundApproval.mockImplementation(() => response(approval))
   mocks.order.mockImplementation(() => response(order))
   mocks.executions.mockImplementation(() => response([]))
   mocks.pendingApprovals.mockImplementation(() => response([approval]))
+  mocks.approvalHistory.mockImplementation(() => response([{ ...approval, customer_id: customer.id, ticket_subject: ticket.subject, execution_result: null }]))
   mocks.approval.mockImplementation(() => response(approval))
+  const refundResult = { approval: { ...approval, status: 'executed' as const, refund_id: 31 }, refund_id: 31, payment_id: 3, amount: '1200.00', status: 'success', reason: approval.reason, idempotency_key: 'refund-approval-9', created_at: '2026-06-15T11:00:00Z' }
+  mocks.executeRefund.mockImplementation(() => response(refundResult))
+  mocks.executionResult.mockImplementation(() => response(refundResult))
+  mocks.resumeExecution.mockImplementation(() => response({ ...execution, status: 'completed' }))
   const session = { id: 13, ticket_id: 42, customer_id: 7, status: 'active' as const, created_at: '', updated_at: '' }
   mocks.conversation.mockImplementation(() => response({ session, messages: [] } satisfies AgentConversation))
   mocks.sessionStatus.mockImplementation(() => response({ session, current_execution: execution } satisfies SessionStatus))
@@ -69,6 +77,36 @@ describe('support dashboard', () => {
     expect(await screen.findByText('Run #21')).toBeInTheDocument()
     expect(screen.getByText('completed')).toBeInTheDocument()
     expect(mocks.createSession).toHaveBeenCalledWith(ticket, expect.any(String))
+  })
+
+  it('shows scoped payment and shipment context and submits a human refund request', async () => {
+    visit('/tickets/42')
+    expect(await screen.findByText(/TRACK-5/)).toBeInTheDocument()
+    expect(screen.getByText('Payment #3')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Requested amount'), { target: { value: '25.00' } })
+    fireEvent.change(screen.getByLabelText('Request reason'), { target: { value: 'Customer reports damage.' } })
+    fireEvent.click(screen.getByRole('button', { name: /Submit for human approval/i }))
+    expect(await screen.findByText(/submitted for human review/i)).toBeInTheDocument()
+    expect(mocks.createRefundApproval).toHaveBeenCalledWith(7, 42, expect.objectContaining({
+      order_id: 8, payment_id: 3, requested_amount: '25.00', reason: 'Customer reports damage.',
+    }))
+  })
+
+  it('shows source titles and excerpts attached to the saved recommendation', async () => {
+    const session = { id: 13, ticket_id: 42, customer_id: 7, status: 'active' as const, created_at: '', updated_at: '' }
+    const cited = { ...execution, recommendation: {
+      ticket_id: 42, issue_category: 'shipping', issue_summary: ticket.subject,
+      customer_context_summary: 'Order available.', proposed_resolution: 'Check carrier status.',
+      explanation: 'Based on policy.', confidence_score: 0.8, missing_information: [],
+      human_review_recommended: true, action_required: false, required_action: null,
+      retrieved_knowledge_sources: [{ id: 'source-3', document_id: 'shipping-3', document_name: 'Shipping Policy', category: 'shipping', text: 'Carrier updates can take one business day.', distance: 0.12 }],
+    } }
+    sessionStorage.setItem('northstar-agent-session-42', '13')
+    mocks.conversation.mockImplementation(() => response({ session, messages: [] }))
+    mocks.sessionStatus.mockImplementation(() => response({ session, current_execution: cited }))
+    visit('/tickets/42')
+    expect(await screen.findByText('Shipping Policy')).toBeInTheDocument()
+    expect(screen.getByText('Carrier updates can take one business day.')).toBeInTheDocument()
   })
 
   it('submits a message and renders the saved conversation and status', async () => {
@@ -123,7 +161,7 @@ describe('support dashboard', () => {
     expect(mocks.execution).toHaveBeenCalledWith(7, 21)
   })
 
-  it('confirms and records a refund approval without invoking refund execution', async () => {
+  it('approves a refund, explicitly executes it, and displays the verified result', async () => {
     const approved = { ...approval, status: 'approved' as const, reviewed_by: 'reviewer', policy_review_confirmed: true }
     mocks.pendingApprovals.mockImplementation(() => response([approval]))
     mocks.approve.mockImplementation(() => response(approved))
@@ -134,7 +172,9 @@ describe('support dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Confirm approval/i }))
     expect(await screen.findByText(/Approval recorded/i)).toBeInTheDocument()
     expect(mocks.approve).toHaveBeenCalledWith(9)
-    expect('execute' in mocks).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /Execute approved refund/i }))
+    expect(await screen.findByText(/Refund execution confirmed/i)).toBeInTheDocument()
+    expect(mocks.executeRefund).toHaveBeenCalledWith(9)
   })
 
   it('requires a rejection reason and submits it to the backend', async () => {

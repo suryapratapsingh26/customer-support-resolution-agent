@@ -243,6 +243,7 @@ class AgentExecution(Base):
     status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     agent_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommendation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     proposed_action: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     approval_id: Mapped[int | None] = mapped_column(ForeignKey("refund_approvals.id"), nullable=True)
     error_info: Mapped[str | None] = mapped_column(Text, nullable=True)
