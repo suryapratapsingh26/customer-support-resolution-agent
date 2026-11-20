@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +25,22 @@ class Settings(BaseSettings):
     approval_request_actor_id: str | None = None
     agent_api_key: str | None = None
     agent_customer_token_secret: str | None = None
+    oidc_issuer: str | None = None
+    oidc_audience: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_redirect_uri: str | None = None
+    oidc_jwks_url: str | None = None
+    oidc_allowed_algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
+    oidc_roles_claim: str = "roles"
+    oidc_customer_ids_claim: str = "customer_ids"
+    oidc_reviewer_role: str = "support_reviewer"
+    oidc_agent_role: str = "support_agent"
+    bff_session_cookie_name: str = "support_session"
+    bff_session_ttl_seconds: int = 28800
+    bff_session_cookie_secure: bool = True
+    bff_trusted_origins: list[str] = Field(default_factory=list)
+    backend_service_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

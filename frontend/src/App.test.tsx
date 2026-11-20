@@ -5,6 +5,7 @@ import { ApiError } from './api/client'
 import type { AgentConversation, AgentExecution, Customer, Order, RefundApproval, SessionStatus, Ticket } from './types'
 
 const mocks = vi.hoisted(() => ({
+  authStatus: vi.fn(), logout: vi.fn(),
   customers: vi.fn(), tickets: vi.fn(), ticket: vi.fn(), order: vi.fn(), createSession: vi.fn(),
   conversation: vi.fn(), sessionStatus: vi.fn(), sendMessage: vi.fn(), executions: vi.fn(), execution: vi.fn(),
   cancelExecution: vi.fn(), pendingApprovals: vi.fn(), approval: vi.fn(), approve: vi.fn(),
@@ -20,6 +21,8 @@ const approval: RefundApproval = { id: 9, ticket_id: 42, order_id: 8, payment_id
 
 function response<T>(body: T) { return Promise.resolve(body) }
 function arrange() {
+  mocks.authStatus.mockImplementation(() => response({ authenticated: true, user: { subject: 'agent-1', name: 'Support Agent', email: 'agent@example.test' }, permissions: { reviewer: true }, csrf_token: 'csrf-test' }))
+  mocks.logout.mockImplementation(() => response(undefined))
   mocks.customers.mockImplementation(() => response([customer]))
   mocks.tickets.mockImplementation(() => response([ticket]))
   mocks.ticket.mockImplementation(() => response(ticket))
@@ -33,8 +36,8 @@ function arrange() {
 }
 function visit(path: string) { window.history.pushState({}, '', path); return render(<App />) }
 
-beforeEach(() => { vi.clearAllMocks(); arrange(); window.supportDashboardHost = { getAuthorizedCustomers: () => response([customer]), request: () => Promise.reject(new Error('not used')) } })
-afterEach(() => { vi.restoreAllMocks(); delete window.supportDashboardHost; window.history.pushState({}, '', '/') })
+beforeEach(() => { vi.clearAllMocks(); arrange() })
+afterEach(() => { vi.restoreAllMocks(); window.history.pushState({}, '', '/') })
 
 describe('support dashboard', () => {
   it('renders the overview from authorized customer and ticket data', async () => {
@@ -153,7 +156,7 @@ describe('support dashboard', () => {
     mocks.approval.mockImplementation(() => response(executed))
     mocks.executionResult.mockImplementation(() => response({ approval: executed, refund_id: 31, payment_id: 3, amount: '1200.00', status: 'success', reason: executed.reason, idempotency_key: 'refund-approval-9', created_at: '2026-06-15T11:00:00Z' }))
     visit('/approvals')
-    fireEvent.change(screen.getByLabelText('Approval ID'), { target: { value: '9' } })
+    fireEvent.change(await screen.findByLabelText('Approval ID'), { target: { value: '9' } })
     fireEvent.click(screen.getByRole('button', { name: 'Look up' }))
     expect(await screen.findByText('Refund execution confirmed')).toBeInTheDocument()
     expect(screen.getByText(/Refund #31/)).toBeInTheDocument()

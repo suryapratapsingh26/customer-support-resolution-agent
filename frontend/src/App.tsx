@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from './api/client'
+import { AuthProvider, useAuth } from './auth/AuthContext'
 import { supportApi } from './api/support'
 import { useDashboard } from './hooks/useDashboard'
 import { EmptyState, ErrorState, Loading, PageTitle, Panel, Shell, StatusBadge } from './components/ui'
 import type { AgentExecution, AgentMessage, Customer, Order, RefundApproval, RefundExecutionResult, Ticket } from './types'
 
 function DashboardPage() {
+  const auth = useAuth()
   const data = useDashboard()
   const [pending, setPending] = useState<number | null>(null)
   useEffect(() => {
-    if (window.supportDashboardHost) supportApi.pendingApprovals().then(rows => setPending(rows.length)).catch(() => setPending(null))
-  }, [])
+    if (auth.status?.permissions.reviewer) supportApi.pendingApprovals().then(rows => setPending(rows.length)).catch(() => setPending(null))
+  }, [auth.status?.permissions.reviewer])
   if (data.loading) return <Shell title="Overview"><Loading /></Shell>
   if (data.error) return <Shell title="Overview"><PageTitle eyebrow="SUPPORT OVERVIEW" title="Welcome back" subtitle="Here’s what’s happening across your support desk." /><ErrorState message={data.error} onRetry={data.reload} /></Shell>
   const open = data.tickets.filter(t => t.status === 'open' || t.status === 'in_progress').length
@@ -291,7 +293,26 @@ function Fact({ label, value }: { label: string; value: ReactNode }) { return <d
 
 function AppRoutes() {
   const navigate = useNavigate()
-  return <Routes><Route path="/" element={<DashboardPage />} /><Route path="/tickets" element={<TicketsPage />} /><Route path="/tickets/:ticketId" element={<TicketDetailPage />} /><Route path="/approvals" element={<ApprovalsPage />} /><Route path="*" element={<Shell title="Not found"><PageTitle title="Page not found" subtitle="This workspace page does not exist." action={<button className="button button-primary" onClick={() => navigate('/')}>Back to overview</button>} /></Shell>} /></Routes>
+  return <Routes><Route path="/" element={<DashboardPage />} /><Route path="/tickets" element={<TicketsPage />} /><Route path="/tickets/:ticketId" element={<TicketDetailPage />} /><Route path="/approvals" element={<ReviewerRoute><ApprovalsPage /></ReviewerRoute>} /><Route path="*" element={<Shell title="Not found"><PageTitle title="Page not found" subtitle="This workspace page does not exist." action={<button className="button button-primary" onClick={() => navigate('/')}>Back to overview</button>} /></Shell>} /></Routes>
 }
 
-export default function App() { return <BrowserRouter><AppRoutes /></BrowserRouter> }
+function ReviewerRoute({ children }: { children: ReactNode }) {
+  const auth = useAuth()
+  if (!auth.status?.permissions.reviewer) return <Shell title="Restricted"><PageTitle title="Reviewer access required" subtitle="Your account does not have permission to review refund approvals." /></Shell>
+  return <>{children}</>
+}
+
+function SignInPage() {
+  const auth = useAuth()
+  return <main className="signin-page"><section className="signin-card"><span className="brand-mark">N</span><div className="eyebrow">NORTHSTAR SUPPORT DESK</div><h1>Sign in to your workspace</h1><p>Use your organization account to access assigned customer support records.</p>{auth.error && <div className="inline-error">{auth.error}</div>}<button className="button button-primary signin-button" onClick={auth.login}>Continue with organization sign-in <span>→</span></button><small>Access is managed by your organization.</small></section></main>
+}
+
+function AuthenticatedApp() {
+  const auth = useAuth()
+  if (auth.loading) return <Loading label="Checking your secure session" />
+  if (auth.error && !auth.status) return <SignInPage />
+  if (!auth.status?.authenticated) return <SignInPage />
+  return <BrowserRouter><AppRoutes /></BrowserRouter>
+}
+
+export default function App() { return <AuthProvider><AuthenticatedApp /></AuthProvider> }

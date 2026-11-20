@@ -8,10 +8,13 @@ from app.db.base import Base
 from app.db.models import Customer, Order, OrderItem, Ticket
 from app.db.session import get_db
 from app.main import app
+from app.config import settings
 
 
 @pytest.fixture
 def client():
+    previous_service_key = settings.backend_service_api_key
+    settings.backend_service_api_key = "test-backend-service-token-012345678901"
     test_engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -41,9 +44,10 @@ def client():
 
     app.dependency_overrides[get_db] = override_get_db
 
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"X-Backend-Service-Token": settings.backend_service_api_key}) as test_client:
         yield test_client
 
     app.dependency_overrides.clear()
+    settings.backend_service_api_key = previous_service_key
     Base.metadata.drop_all(bind=test_engine)
     test_engine.dispose()

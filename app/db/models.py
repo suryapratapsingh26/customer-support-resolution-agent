@@ -250,6 +250,31 @@ class AgentExecution(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class BFFLoginAttempt(Base):
+    __tablename__ = "bff_login_attempts"
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    browser_binding_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    code_verifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class BFFSession(Base):
+    __tablename__ = "bff_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    roles: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    customer_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    csrf_token: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class Shipment(Base):
     __tablename__ = "shipments"
 

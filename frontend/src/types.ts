@@ -15,12 +15,4 @@ export interface SessionStatus { session: AgentSession; current_execution: Agent
 export interface RefundApproval { id: number; ticket_id: number; order_id: number; payment_id: number; requested_amount: string; policy_basis: string; reason: string; status: ApprovalStatus; requested_by: string; policy_review_confirmed: boolean; created_at: string; reviewed_by: string | null; reviewed_at: string | null; rejection_reason: string | null; executed_at: string | null; refund_id: number | null }
 export interface RefundExecutionResult { approval: RefundApproval; refund_id: number; payment_id: number; amount: string; status: string; reason: string; idempotency_key: string; created_at: string }
 
-export interface RequestContext { customerId?: number; role: 'agent' | 'reviewer' | 'public' }
-export interface DashboardHost {
-  getAuthorizedCustomers(): Promise<Customer[]>
-  request(url: string, init: RequestInit, context: RequestContext): Promise<Response>
-}
-
-declare global {
-  interface Window { supportDashboardHost?: DashboardHost }
-}
+export interface AuthStatus { authenticated: boolean; user: { subject: string; name: string | null; email: string | null } | null; permissions: { reviewer: boolean }; csrf_token?: string }

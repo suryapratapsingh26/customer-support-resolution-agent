@@ -1,7 +1,8 @@
 from functools import lru_cache
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.auth.service import require_backend_service
 from app.config import settings
 from app.knowledge.embeddings import EmbeddingError
 from app.knowledge.loaders import DocumentLoadError
@@ -9,7 +10,7 @@ from app.knowledge.service import build_knowledge_service
 from app.knowledge.vector_store import VectorStoreError
 from app.schemas.knowledge import IngestRequest, IngestResult, SearchRequest, SearchResponse
 
-router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
+router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"], dependencies=[Depends(require_backend_service)])
 
 
 @lru_cache(maxsize=1)

@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.service import require_backend_service
 from app.schemas.order import OrderResponse
 from app.services import order as order_service
 
 
-router = APIRouter(prefix="/orders", tags=["Orders"])
+router = APIRouter(prefix="/orders", tags=["Orders"], dependencies=[Depends(require_backend_service)])
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
