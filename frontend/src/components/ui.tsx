@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import type { ExecutionStatus, TicketStatus } from '../types'
+import { useAuth } from '../auth/AuthContext'
 
 export function Shell({ children, title }: { children: ReactNode; title: string }) {
+  const auth = useAuth()
   return <div className="app-shell">
     <aside className="sidebar">
       <Link className="brand" to="/"><span className="brand-mark">N</span><span>northstar<span className="brand-sub">SUPPORT DESK</span></span></Link>
@@ -10,12 +12,12 @@ export function Shell({ children, title }: { children: ReactNode; title: string 
       <nav className="nav-list" aria-label="Main navigation">
         <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}><span className="nav-icon">◫</span>Overview</NavLink>
         <NavLink to="/tickets" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}><span className="nav-icon">▤</span>Tickets</NavLink>
-        <NavLink to="/approvals" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}><span className="nav-icon">♧</span>Refund approvals</NavLink>
+        {auth.status?.permissions.reviewer && <NavLink to="/approvals" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}><span className="nav-icon">♧</span>Refund approvals</NavLink>}
       </nav>
       <div className="sidebar-bottom"><span className="online-dot" /> All systems operational</div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="mobile-brand"><span className="brand-mark">N</span> Northstar</div><div className="breadcrumbs">Support workspace <span>/</span> <strong>{title}</strong></div><div className="profile"><span className="profile-avatar">SD</span><span><b>Support desk</b><small>Agent workspace</small></span></div></header>
+      <header className="topbar"><div className="mobile-brand"><span className="brand-mark">N</span> Northstar</div><div className="breadcrumbs">Support workspace <span>/</span> <strong>{title}</strong></div><div className="profile"><span className="profile-avatar">{(auth.status?.user?.name || 'SD').split(' ').map(part => part[0]).slice(0, 2).join('')}</span><span><b>{auth.status?.user?.name || 'Support desk'}</b><small>{auth.status?.permissions.reviewer ? 'Reviewer workspace' : 'Agent workspace'}</small></span><button className="text-button logout-button" onClick={() => void auth.logout()}>Sign out</button></div></header>
       <div className="page-content">{children}</div>
     </main>
   </div>

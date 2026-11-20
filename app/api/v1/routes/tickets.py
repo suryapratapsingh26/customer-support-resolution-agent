@@ -3,13 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Customer, Order
 from app.db.session import get_db
+from app.auth.service import require_backend_service
 from app.schemas.ticket import TicketCreate, TicketResponse, TicketUpdate
 from app.schemas.resolution import ResolutionRecommendation
 from app.agents.workflow import TicketNotFoundError, WorkflowError, run_resolution_workflow
 from app.services import ticket as ticket_service
 
 
-router = APIRouter(prefix="/tickets", tags=["Tickets"])
+router = APIRouter(prefix="/tickets", tags=["Tickets"], dependencies=[Depends(require_backend_service)])
 
 
 @router.post("/{ticket_id}/resolution-recommendation", response_model=ResolutionRecommendation)

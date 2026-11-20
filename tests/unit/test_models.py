@@ -15,6 +15,8 @@ def test_all_models_are_registered():
         "agent_sessions",
         "agent_messages",
         "agent_executions",
+        "bff_login_attempts",
+        "bff_sessions",
     }
 
     assert set(Base.metadata.tables.keys()) == expected_tables

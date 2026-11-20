@@ -3,11 +3,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.auth.service import require_backend_service
 from app.schemas.customer import CustomerCreate, CustomerResponse
 from app.services import customer as customer_service
 
 
-router = APIRouter(prefix="/customers", tags=["Customers"])
+router = APIRouter(prefix="/customers", tags=["Customers"], dependencies=[Depends(require_backend_service)])
 
 
 @router.post(
