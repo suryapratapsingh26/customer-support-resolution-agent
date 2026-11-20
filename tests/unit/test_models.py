@@ -10,6 +10,7 @@ def test_all_models_are_registered():
         "tickets",
         "payments",
         "refunds",
+        "refund_approvals",
         "shipments",
     }
 
@@ -23,4 +24,5 @@ def test_models_have_expected_tables():
     assert "tickets" in Base.metadata.tables
     assert "payments" in Base.metadata.tables
     assert "refunds" in Base.metadata.tables
+    assert "refund_approvals" in Base.metadata.tables
     assert "shipments" in Base.metadata.tables

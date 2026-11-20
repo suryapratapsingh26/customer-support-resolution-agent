@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_base_url: str = "https://api.openai.com/v1"
     llm_timeout_seconds: float = 30.0
+    approval_api_key: str | None = None
+    approval_actor_id: str | None = None
+    approval_request_api_key: str | None = None
+    approval_request_actor_id: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

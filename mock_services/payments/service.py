@@ -1,9 +1,10 @@
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from app.db.models import Payment, Refund
+from app.db.models import Payment, Refund, RefundApproval
 
 
 class PaymentNotFoundError(Exception):
@@ -54,7 +55,38 @@ def process_refund(
     amount: Decimal,
     reason: str,
     idempotency_key: str,
+    *,
+    approval_id: int | None = None,
+    commit: bool = True,
 ) -> Refund:
+    if approval_id is None:
+        raise InvalidRefundError("Refund execution requires an approved refund request.")
+    approval = db.scalar(
+        select(RefundApproval).where(RefundApproval.id == approval_id).with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if approval is None:
+        raise InvalidRefundError("Refund approval was not found.")
+    if (not approval.policy_review_confirmed or not approval.reviewed_by
+            or approval.reviewed_by == approval.requested_by or approval.reviewed_at is None):
+        raise InvalidRefundError("Refund approval has no confirmed human policy review.")
+    if (approval.payment_id != payment_id or approval.requested_amount != amount
+            or approval.reason != reason):
+        raise InvalidRefundError("Refund details do not match the approved request.")
+    if approval.status == "executed" and approval.refund_id is not None:
+        if idempotency_key != f"refund-approval-{approval.id}":
+            raise DuplicateRefundError("Idempotency key must be scoped to the approved request.")
+        existing = db.get(Refund, approval.refund_id)
+        if (existing is None or existing.payment_id != payment_id
+                or existing.amount != amount or existing.reason != reason
+                or existing.status != "success"
+                or existing.idempotency_key != f"refund-approval-{approval.id}"):
+            raise InvalidRefundError("Executed approval has no refund record.")
+        return existing
+    if approval.status != "approved":
+        raise InvalidRefundError("Refund execution requires an approved request.")
+    if idempotency_key != f"refund-approval-{approval.id}":
+        raise DuplicateRefundError("Idempotency key must be scoped to the approved request.")
     if amount <= Decimal("0.00"):
         raise InvalidRefundError("Refund amount must be greater than zero.")
 
@@ -78,9 +110,12 @@ def process_refund(
                 "Idempotency key was already used with different refund details."
             )
 
-        return existing_refund
+        raise DuplicateRefundError("Idempotency key is already attached to another refund approval.")
 
-    payment = db.get(Payment, payment_id)
+    payment = db.scalar(
+        select(Payment).where(Payment.id == payment_id).with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
     if payment is None:
         raise PaymentNotFoundError(
@@ -117,10 +152,18 @@ def process_refund(
 
     try:
         db.add(refund)
-        db.commit()
-        db.refresh(refund)
+        db.flush()
+        approval.status = "executed"
+        approval.refund_id = refund.id
+        approval.executed_at = datetime.now(timezone.utc)
+        if commit:
+            db.commit()
+            db.refresh(refund)
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
     return refund

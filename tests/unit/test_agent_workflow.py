@@ -152,4 +152,6 @@ def test_refund_recommendation_uses_fixed_review_handoff_without_calling_llm(db)
     assert "authorized review" in result.proposed_resolution
     assert "does not determine eligibility" in result.proposed_resolution
     assert result.human_review_recommended is True
+    assert result.action_required is True
+    assert result.required_action == "refund_approval_review"
 
