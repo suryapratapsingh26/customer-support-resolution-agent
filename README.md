@@ -125,3 +125,19 @@ Content-Type: application/json
 Omit the body to ingest the configured directory. Other endpoints are `GET /api/v1/knowledge/documents`, `GET /api/v1/knowledge/documents/{document_id}`, `DELETE /api/v1/knowledge/documents/{document_id}`, and `POST /api/v1/knowledge/search` with `{"query":"When will an approved refund arrive?","top_k":5,"category":"refunds"}`. Search responses contain source-labelled context and chunk distances, never embedding vectors or absolute source paths.
 
 Run the project test suite with `python -m pytest`. Unit tests use fake embedders/stores; the Chroma persistence integration test runs when ChromaDB is installed. A semantic end-to-end test can use a locally cached model when `RUN_REAL_EMBEDDING_TESTS=1`.
+
+## Resolution recommendation workflow
+
+`POST /api/v1/tickets/{ticket_id}/resolution-recommendation` invokes a LangGraph `StateGraph`. Its nodes load the ticket, gather customer/order/item/payment/refund/shipment context, classify the issue and note missing records, search the existing knowledge service, ask the configured LLM for a recommendation, and validate the structured response. A missing ticket ends at the conditional ticket-input branch and returns HTTP 404. Provider, retrieval, or workflow failures return HTTP 503.
+
+The recommendation is advisory. The graph has no payment, refund, order, shipment, or ticket mutation calls. The model is instructed not to decide refund eligibility or authoritative amounts, and the workflow always sets `human_review_recommended` to true. Returned policy sources retain chunk IDs and available document metadata.
+
+The LLM adapter uses an OpenAI-compatible Chat Completions endpoint. Configure `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_TIMEOUT_SECONDS`; `LLM_BASE_URL` defaults to `https://api.openai.com/v1`, model defaults to `gpt-4o-mini`, and no key is required for the rest of the application. Copy `.env.example` to `.env` and supply a key locally. The API key is never returned to clients or included in application error messages.
+
+Example:
+
+```http
+POST /api/v1/tickets/42/resolution-recommendation
+```
+
+The response includes `ticket_id`, `issue_category`, `issue_summary`, `customer_context_summary`, `retrieved_knowledge_sources`, `proposed_resolution`, `explanation`, `confidence_score`, `missing_information`, and `human_review_recommended`. Run the workflow tests with `python -m pytest tests/unit/test_agent_workflow.py`; these use an injected fake LLM and do not call a provider.

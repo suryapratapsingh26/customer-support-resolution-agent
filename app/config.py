@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     knowledge_chunk_overlap: int = 120
     knowledge_top_k: int = 5
     knowledge_context_max_chars: int = 12000
+    llm_api_key: str | None = None
+    llm_model: str = "gpt-4o-mini"
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_timeout_seconds: float = 30.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
