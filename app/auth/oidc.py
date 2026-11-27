@@ -39,15 +39,47 @@ def _configured() -> tuple[str, str, str, str, str]:
 
 def _secure_endpoint(value: str) -> bool:
     parsed = urlsplit(value)
-    return bool(parsed.netloc) and (parsed.scheme == "https" or (
+    if not parsed.netloc or parsed.username or parsed.password:
+        return False
+    if parsed.scheme == "https":
+        return True
+    if (settings.environment == "development" and parsed.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}):
+        return True
+    backchannel = urlsplit(settings.oidc_backchannel_base_url or "")
+    return bool(
         settings.environment == "development" and parsed.scheme == "http"
-        and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-    ))
+        and backchannel.scheme == "http" and backchannel.hostname == "keycloak"
+        and parsed.netloc == backchannel.netloc
+    )
+
+
+def _browser_endpoint(value: str) -> bool:
+    parsed = urlsplit(value)
+    return bool(parsed.netloc) and not parsed.username and not parsed.password and (
+        parsed.scheme == "https" or (
+            settings.environment == "development" and parsed.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        )
+    )
+
+
+def _backchannel_url(path: str) -> str:
+    base = (settings.oidc_backchannel_base_url or "").rstrip("/")
+    return f"{base}{path}"
 
 
 async def _discovery() -> dict:
     issuer, _, _, _, _ = _configured()
-    url = issuer.rstrip("/") + "/.well-known/openid-configuration"
+    issuer_path = urlsplit(issuer).path.rstrip("/")
+    well_known_path = issuer_path + "/.well-known/openid-configuration"
+    if settings.oidc_backchannel_base_url:
+        backchannel_url = _backchannel_url("/")
+        if not _secure_endpoint(backchannel_url):
+            raise OIDCError("OIDC backchannel is not configured securely.")
+        url = _backchannel_url(well_known_path)
+    else:
+        url = issuer.rstrip("/") + "/.well-known/openid-configuration"
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
             response = await client.get(url)
@@ -57,8 +89,14 @@ async def _discovery() -> dict:
             raise OIDCError("Issuer mismatch.")
         if not all(data.get(key) for key in ("authorization_endpoint", "token_endpoint", "jwks_uri")):
             raise OIDCError("OIDC discovery response is incomplete.")
-        if any(not _secure_endpoint(data[key]) for key in ("authorization_endpoint", "token_endpoint", "jwks_uri")):
+        if not _browser_endpoint(data["authorization_endpoint"]):
             raise OIDCError("OIDC discovery contains an insecure endpoint.")
+        for key in ("token_endpoint", "jwks_uri"):
+            endpoint_path = urlsplit(data[key]).path
+            if settings.oidc_backchannel_base_url:
+                data[key] = _backchannel_url(endpoint_path)
+            if not _secure_endpoint(data[key]):
+                raise OIDCError("OIDC discovery contains an insecure endpoint.")
         return data
     except Exception as exc:
         raise OIDCError("Identity provider discovery failed.") from exc

@@ -13,7 +13,27 @@ from app.config import settings
 
 @pytest.fixture
 def client():
-    previous_service_key = settings.backend_service_api_key
+    auth_setting_names = (
+        "backend_service_api_key", "agent_api_key", "agent_customer_token_secret",
+        "approval_api_key", "approval_actor_id", "approval_request_api_key",
+        "approval_request_actor_id", "oidc_issuer", "oidc_audience", "oidc_client_id",
+        "oidc_client_secret", "oidc_redirect_uri", "oidc_jwks_url",
+        "oidc_backchannel_base_url", "bff_trusted_origins", "environment",
+        "oidc_roles_claim", "oidc_customer_ids_claim", "oidc_reviewer_role",
+        "oidc_agent_role", "oidc_allowed_algorithms",
+    )
+    previous_auth_settings = {name: getattr(settings, name) for name in auth_setting_names}
+    test_auth_settings = {
+        "environment": "development",
+        "bff_trusted_origins": [],
+        "oidc_roles_claim": "roles",
+        "oidc_customer_ids_claim": "customer_ids",
+        "oidc_reviewer_role": "support_reviewer",
+        "oidc_agent_role": "support_agent",
+        "oidc_allowed_algorithms": ["RS256"],
+    }
+    for name in auth_setting_names:
+        setattr(settings, name, test_auth_settings.get(name))
     settings.backend_service_api_key = "test-backend-service-token-012345678901"
     test_engine = create_engine(
         "sqlite://",
@@ -48,6 +68,7 @@ def client():
         yield test_client
 
     app.dependency_overrides.clear()
-    settings.backend_service_api_key = previous_service_key
+    for name, value in previous_auth_settings.items():
+        setattr(settings, name, value)
     Base.metadata.drop_all(bind=test_engine)
     test_engine.dispose()

@@ -1,0 +1,152 @@
+services:
+  db:
+    build:
+      context: ./deploy/postgres
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-customer_support}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_USER: ${APP_DB_USER:-support_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+      MIGRATION_DB_USER: ${MIGRATION_DB_USER:-support_migrator}
+      MIGRATION_DB_PASSWORD: ${MIGRATION_DB_PASSWORD:?Set MIGRATION_DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://${MIGRATION_DB_USER:-support_migrator}:${MIGRATION_DB_PASSWORD:?Set MIGRATION_DB_PASSWORD in .env}@db:5432/${POSTGRES_DB:-customer_support}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_NAME: ${APP_NAME:-Customer Support Resolution Agent}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-support_app}:${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}@db:5432/${POSTGRES_DB:-customer_support}
+      KNOWLEDGE_BASE_DIR: ${KNOWLEDGE_BASE_DIR:-knowledge_base}
+      CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-.data/chroma}
+      CHROMA_COLLECTION_NAME: ${CHROMA_COLLECTION_NAME:-support_knowledge}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      KNOWLEDGE_CHUNK_SIZE: ${KNOWLEDGE_CHUNK_SIZE:-900}
+      KNOWLEDGE_CHUNK_OVERLAP: ${KNOWLEDGE_CHUNK_OVERLAP:-120}
+      KNOWLEDGE_TOP_K: ${KNOWLEDGE_TOP_K:-5}
+      KNOWLEDGE_CONTEXT_MAX_CHARS: ${KNOWLEDGE_CONTEXT_MAX_CHARS:-12000}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      APPROVAL_API_KEY: ${APPROVAL_API_KEY:-}
+      APPROVAL_ACTOR_ID: ${APPROVAL_ACTOR_ID:-}
+      APPROVAL_REQUEST_API_KEY: ${APPROVAL_REQUEST_API_KEY:-}
+      APPROVAL_REQUEST_ACTOR_ID: ${APPROVAL_REQUEST_ACTOR_ID:-}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_CUSTOMER_TOKEN_SECRET: ${AGENT_CUSTOMER_TOKEN_SECRET:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8080/api/bff/auth/callback}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      OIDC_BACKCHANNEL_BASE_URL: ${OIDC_BACKCHANNEL_BASE_URL:-}
+      OIDC_ALLOWED_ALGORITHMS: '${OIDC_ALLOWED_ALGORITHMS:-["RS256"]}'
+      OIDC_ROLES_CLAIM: ${OIDC_ROLES_CLAIM:-roles}
+      OIDC_CUSTOMER_IDS_CLAIM: ${OIDC_CUSTOMER_IDS_CLAIM:-customer_ids}
+      OIDC_REVIEWER_ROLE: ${OIDC_REVIEWER_ROLE:-support_reviewer}
+      OIDC_AGENT_ROLE: ${OIDC_AGENT_ROLE:-support_agent}
+      BFF_SESSION_COOKIE_NAME: ${BFF_SESSION_COOKIE_NAME:-support_session}
+      BFF_SESSION_TTL_SECONDS: ${BFF_SESSION_TTL_SECONDS:-28800}
+      BFF_TRUSTED_ORIGINS: '${BFF_TRUSTED_ORIGINS:-["http://localhost:8080"]}'
+      BFF_SESSION_COOKIE_SECURE: ${BFF_SESSION_COOKIE_SECURE:-false}
+      BACKEND_SERVICE_API_KEY: ${BACKEND_SERVICE_API_KEY:-}
+      HF_HOME: /app/.cache/huggingface
+    volumes:
+      - knowledge_data:/app/.data
+      - model_cache:/app/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [frontend_backend, data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [frontend_backend]
+    restart: unless-stopped
+
+  keycloak:
+    profiles: [local-oidc]
+    build:
+      context: ./deploy/keycloak
+      dockerfile: Dockerfile
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-}
+      KC_HOSTNAME: ${OIDC_ISSUER_BASE_URL:-http://localhost:8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_DEV_AGENT_PASSWORD: ${OIDC_DEV_AGENT_PASSWORD:-}
+      OIDC_DEV_REVIEWER_PASSWORD: ${OIDC_DEV_REVIEWER_PASSWORD:-}
+      OIDC_DEV_CUSTOMER_IDS: ${OIDC_DEV_CUSTOMER_IDS:-1,2,3}
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data/h2
+    networks: [frontend_backend]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/local-oidc-configured && kill -0 \"$$(cat /tmp/keycloak.pid)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+
+networks:
+  frontend_backend:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:
+  knowledge_data:
+  model_cache:
+  keycloak_data:
