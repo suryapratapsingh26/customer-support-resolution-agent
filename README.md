@@ -229,4 +229,125 @@ Configure `BFF_TRUSTED_ORIGINS` to the exact dashboard origin(s), `BFF_SESSION_T
 
 The BFF provides `/auth/status`, `/auth/login`, `/auth/callback`, `/auth/logout`; customer-authorized ticket context at `GET /customers/{customer_id}/tickets/{ticket_id}/context`; agent-session and execution routes; and customer-scoped refund request/history routes. Reviewers can use `GET /refund-approvals/pending`, `GET /refund-approvals/history`, and `/refund-approvals/{approval_id}` for approval review, `POST /refund-approvals/{approval_id}/execute` to execute an approved request, and `POST /agent-executions/{execution_id}/resume` to resume a matching waiting run. The browser never supplies reviewer identity or backend credentials. Every state-changing BFF call requires the session CSRF token and a trusted origin. The agent proposes a review handoff only; staff provide request amount/reason, deterministic services validate eligibility, a different authorized reviewer approves, and execution uses the existing idempotent refund service. See the API docs at `/docs` for request and response schemas after configuring the application.
 
+### Optional local Keycloak identity provider
+
+The `keycloak` service is guarded by the `local-oidc` Compose profile and is bound only to `127.0.0.1`; ordinary `docker compose up` does not start it. It uses the development-only Keycloak 26.8.2 container, imports `customer-support-dev` at startup, and overwrites the imported placeholder client/user passwords from `.env.keycloak`. Keycloak realm import is skipped if the realm already exists, as designed by Keycloak; remove/re-import only the local realm when changing the imported realm definition. This profile and its sample credentials are for local development only and must not be enabled in a deployed environment.
+
+On a fresh checkout, first configure the regular local database and application values in `.env` as described above. Then create the separate local identity-provider file and launch the profile:
+
+```powershell
+Copy-Item .env.keycloak.example .env.keycloak
+docker compose --env-file .env --env-file .env.keycloak --profile local-oidc up --build --wait -d
+docker compose exec backend python scripts/seed_mock_services.py
+```
+
+Set `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, and `MIGRATION_DB_PASSWORD` in `.env` before startup. `.env.keycloak.example` contains explicitly local-only sample credentials that are not production secrets; change them if the machine is shared. The imported client secret is set from `OIDC_CLIENT_SECRET` at Keycloak startup, and the app receives that same local value through its backend-only environment. The realm has a confidential OIDC client with PKCE S256 and the exact redirect `http://localhost:8080/api/bff/auth/callback`.
+
+The browser uses `http://localhost:8081` for the login page and callback round-trip. The backend discovers Keycloak through `http://keycloak:8080`; the Keycloak hostname configuration keeps the OIDC issuer and browser authorization endpoint at the localhost URL while using the Docker-network backchannel for token and JWKS requests. Keep `OIDC_ISSUER` set to `http://localhost:8081/realms/customer-support-dev`; do not set it to the Docker-only `keycloak` hostname. This split preserves issuer validation and does not add a login bypass.
+
+Local test users are `dev-agent` and `dev-reviewer`. Their sample passwords are in `.env.keycloak.example`; the bootstrap admin is only for `http://localhost:8081/admin`. The agent user receives the `support_agent` realm role and the reviewer receives `support_reviewer`. Both receive the configured positive `OIDC_DEV_CUSTOMER_IDS` claim as an integer array in their ID token. The example uses IDs `1,2,3`, matching the three customers created by `scripts/seed_mock_services.py` in a fresh database. For an existing DB, set the variable to actual customer IDs. These identity roles still pass through the same signed ID-token validation, server-side role checks, customer scope checks, CSRF checks, and self-approval prevention as any configured OIDC provider.
+
+Troubleshooting:
+
+- Verify the browser-visible discovery document at `http://localhost:8081/realms/customer-support-dev/.well-known/openid-configuration`; its `issuer` must match `OIDC_ISSUER` and its authorization endpoint must use `localhost:8081`.
+- If the login redirect or callback is rejected, verify the exact redirect URI in `.env.keycloak` and the realm client, then restart the profile.
+- If backend discovery/JWKS fails, confirm `OIDC_BACKCHANNEL_BASE_URL=http://keycloak:8080`, that the Keycloak service is healthy, and that the backend shares the `frontend_backend` network.
+- If login succeeds but no customers/tickets appear, align `OIDC_DEV_CUSTOMER_IDS` with DB IDs and run the seed command above.
+- Inspect local-only logs with `docker compose --profile local-oidc logs keycloak`. Realm import runs only when the realm is absent; for an import-definition reset, delete only `customer-support-dev` using the local Keycloak admin console and restart Keycloak. Do not remove PostgreSQL volumes to reset Keycloak.
+
+Keycloak containers, users, URLs, and credentials are local-only. No mock-authentication path or authenticated user is added to the application. The production deployment continues to use its separately configured OIDC provider and does not start the profile unless explicitly requested.
+
 Frontend tests cover dashboard rendering, ticket search/filtering and context, agent session/message and citation display, refund request and history, approval/rejection/execution, and authentication/error handling. Run `npm test` and `npm run build` from `frontend/`. The backend suite remains `python -m pytest` from the repository root.
+
+## Container deployment and operations
+
+### Architecture and prerequisites
+
+The backend container runs FastAPI/Uvicorn as an unprivileged `app` user. The frontend container builds the Vite application and serves it with Nginx; Nginx forwards same-origin `/api/` requests to the backend, so browser code receives no backend credentials. PostgreSQL is on a data-only internal network and its data is stored in a named volume. A one-shot `migrate` service runs Alembic after PostgreSQL is healthy and before the API service starts; API replicas never run migrations at startup. The API connects with a restricted runtime role; only the migration job uses the schema-owner role, and a separate bootstrap account initializes the roles on a fresh Compose volume. Chroma vectors and the Hugging Face model cache use separate persistent volumes.
+
+Requirements: Docker Engine with the Compose v2 plugin, and OpenSSL for generating local secrets. For production, use an HTTPS ingress/load balancer in front of the dashboard container, a managed PostgreSQL service with encrypted backups, a real OIDC provider, and an LLM provider. Payment and shipping are still repository mocks.
+
+### Local Compose startup
+
+```sh
+cp .env.example .env
+openssl rand -hex 32 # create separate values for POSTGRES_PASSWORD and each server credential
+# Edit .env: use a different generated value for every REPLACE_* entry.
+docker compose up --build -d
+docker compose ps
+```
+
+Open `http://localhost:8080`. OIDC sign-in will remain unavailable until a provider is configured and its client is registered with the callback URL in `.env`. For developer-only, host-run API use, install with `python -m pip install -e ".[dev]"`, set `DATABASE_URL` to a separately installed/local PostgreSQL instance, then run `uvicorn app.main:app --reload`; run the frontend separately with `cd frontend && npm ci && npm run dev`. The Vite development proxy targets `http://127.0.0.1:8000` unless `BFF_TARGET` is set. Compose does not publish PostgreSQL on a host port.
+
+### Environment and production configuration
+
+`.env.example` documents all application settings and contains placeholders, not usable secrets. Keep `.env` out of source control. At minimum production requires:
+
+- `DATABASE_URL` using `postgresql+psycopg` and a reachable PostgreSQL server.
+- `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and HTTPS `OIDC_REDIRECT_URI` ending in `/api/bff/auth/callback`. The ID token must include the configured role and positive integer customer ID claims (`OIDC_ROLES_CLAIM`, `OIDC_CUSTOMER_IDS_CLAIM`). Register the exact callback and trusted origins with the provider and identity administrators; this repository does not configure a real IdP.
+- Independent random values of at least 32 characters for `BACKEND_SERVICE_API_KEY`, `AGENT_API_KEY`, `AGENT_CUSTOMER_TOKEN_SECRET`, `APPROVAL_API_KEY`, and `APPROVAL_REQUEST_API_KEY`. The configuration validator rejects reused service secrets and identical requester/reviewer identities.
+- Distinct `APPROVAL_ACTOR_ID` and `APPROVAL_REQUEST_ACTOR_ID`, an `LLM_API_KEY`, and an HTTPS `LLM_BASE_URL`.
+- `BFF_SESSION_COOKIE_SECURE=true` and `BFF_TRUSTED_ORIGINS` containing only exact HTTPS dashboard origins. Terminate TLS at a trusted ingress; expose the dashboard publicly and keep backend/PostgreSQL ports private. Do not place any server credential in a `VITE_*` variable.
+
+Non-development startup fails if required values are missing or insecure. Local Compose defaults to development mode and HTTP only; never use that mode for an internet-facing deployment. Configure `ENVIRONMENT=production`, HTTPS OIDC callback/origins, and the secure cookie flag in the deployment secret manager. Use hex-encoded database passwords because Compose builds the connection URL from PostgreSQL environment variables.
+
+### Migrations and schema validation
+
+Never run migrations against an existing production database as an experiment. Back it up first, then run the one-shot migration job during a controlled release:
+
+```sh
+docker compose run --rm migrate
+# or, from a configured Python environment:
+alembic upgrade head
+```
+
+Compose runs the job once before starting this stack's backend. In multi-replica deployments, run the migration job once in the release pipeline before scaling/restarting API replicas. The app does not auto-migrate. To validate the full migration graph on a disposable, initially empty PostgreSQL database, use a database name ending in `_migration_test`:
+
+```sh
+$env:MIGRATION_TEST_DATABASE_URL='postgresql+psycopg://user:password@localhost:5432/customer_support_migration_test'
+python scripts/validate_migrations.py
+```
+
+The script refuses an existing application schema, applies all revisions, checks critical tables/indexes/foreign keys/JSON type, downgrades the latest revision, then reapplies head. CI runs this against a fresh PostgreSQL service. SQLite unit/API tests do not substitute for this database-specific check.
+
+### Backups, restores, and application rollback
+
+For Compose, create a logical backup before upgrading:
+
+```sh
+docker compose exec -T db pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > support-$(date +%F-%H%M%S).dump
+```
+
+Restore into a separately provisioned database first, verify it, and then direct the application at that database. For the Compose demo, run backup and restore commands with the bootstrap account from the database container; production managed PostgreSQL should use its backup/PITR tooling:
+
+```sh
+docker compose exec -T db pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists < support-backup.dump
+```
+
+Treat restore as destructive to the selected target database: confirm its name and contents before running `--clean`. Prefer managed PostgreSQL snapshots/PITR for production and test restores regularly. The Compose bootstrap superuser is `POSTGRES_USER`; its password is only used by the database service and is not passed to the API or migration containers. The runtime user is `APP_DB_USER`; Alembic connects as `MIGRATION_DB_USER`. Existing volumes are not reinitialized, so provision and grant these roles explicitly when adopting an existing database. Roll back an application deployment by redeploying the prior immutable image. Do not automatically downgrade a production schema: forward-fix or restore a tested backup unless the specific migration's downgrade has been reviewed against data written by the newer app.
+
+### Health, logs, and shutdown
+
+- `GET /health/live` reports process liveness without exposing configuration.
+- `GET /health/ready` executes `SELECT 1`; it returns a generic 503 while PostgreSQL is unavailable.
+- Legacy `GET /health` remains a liveness alias.
+- Backend logs are structured JSON with timestamp, level, logger, and message. Request bodies, cookies, authorization headers, and exception payloads are not added by the application logger. Uvicorn handles SIGTERM and graceful worker shutdown; the app disposes its SQLAlchemy engine at shutdown.
+
+Check a local stack with `docker compose ps` and `curl -fsS http://localhost:8080/health/ready`. Troubleshoot failed startup with `docker compose logs db migrate backend frontend`; redact credentials and customer data before sharing logs. A failed migration blocks backend startup by design. After changing environment values, recreate the affected services (`docker compose up -d --force-recreate backend frontend`).
+
+### Automated validation and real-infrastructure status
+
+Run backend unit/API tests with `python -m pytest -q`, Python compilation with `python -m compileall -q app migrations tests scripts`, frontend tests/build with `cd frontend && npm ci && npm test && npm run build`, and Compose parsing with `docker compose config --quiet`. The GitHub Actions workflow runs backend tests and compilation, PostgreSQL migration upgrade/downgrade/re-upgrade validation, plus frontend tests and production build.
+
+The BFF dashboard workflow tests use a test database and mock the LLM response; OIDC callback tests mock discovery/token/JWKS verification, and payment/shipping operations use local mock services. Only the PostgreSQL migration job uses a real PostgreSQL server in CI. No real identity provider, LLM account, payment processor, carrier service, or production environment is exercised by those tests.
+
+### Production limitations and release checklist
+
+Before deployment, the operator must configure real OIDC clients/claims and HTTPS ingress, secret-manager values, a production LLM endpoint, PostgreSQL backup/restore, monitoring/alerting, and payment/shipping adapters. The included payment and shipping services are mocks and must not be used to represent actual settlements or parcel events. Refund eligibility also lacks item-condition and return-receipt records; a reviewer must verify those facts. The application is deployment-ready as a containerized demo, but this change does not deploy it to production or claim that external integrations are configured.
+
+- [ ] Production HTTPS origin, OIDC issuer/audience/client/callback, role/customer claims verified
+- [ ] Independent secrets stored in secret manager; secure session cookie enabled
+- [ ] Managed PostgreSQL connectivity, migration reviewed, backup and restore rehearsed
+- [ ] LLM provider and knowledge data/model availability confirmed
+- [ ] Mock payment/shipping adapters replaced and their idempotency/failure behavior tested
+- [ ] Health/readiness, logs, alerts, ingress limits, and rollback plan verified

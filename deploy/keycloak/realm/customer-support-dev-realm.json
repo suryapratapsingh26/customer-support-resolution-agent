@@ -1,0 +1,93 @@
+{
+  "realm": "customer-support-dev",
+  "enabled": true,
+  "displayName": "Customer Support Local Development",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "support_agent", "description": "Local development support agent" },
+      { "name": "support_reviewer", "description": "Local development refund reviewer" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "support-dashboard",
+      "name": "Customer Support Dashboard (local only)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "overwritten-from-local-environment-on-startup",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/api/bff/auth/callback"],
+      "webOrigins": ["http://localhost:8080"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "application-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "customer-ids",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "customer_ids",
+            "claim.name": "customer_ids",
+            "jsonType.label": "long",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-agent",
+      "enabled": true,
+      "email": "dev-agent@local.test",
+      "emailVerified": true,
+      "firstName": "Local",
+      "lastName": "Agent",
+      "attributes": { "customer_ids": ["1", "2", "3"] },
+      "credentials": [
+        { "type": "password", "value": "overwritten-from-local-environment", "temporary": false }
+      ],
+      "realmRoles": ["support_agent"]
+    },
+    {
+      "username": "dev-reviewer",
+      "enabled": true,
+      "email": "dev-reviewer@local.test",
+      "emailVerified": true,
+      "firstName": "Local",
+      "lastName": "Reviewer",
+      "attributes": { "customer_ids": ["1", "2", "3"] },
+      "credentials": [
+        { "type": "password", "value": "overwritten-from-local-environment", "temporary": false }
+      ],
+      "realmRoles": ["support_reviewer"]
+    }
+  ]
+}
